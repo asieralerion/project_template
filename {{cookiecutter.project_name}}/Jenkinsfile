@@ -1,0 +1,72 @@
+#!/usr/bin/env groovy
+def projectProperties = [
+    [$class: 'BuildDiscarderProperty', strategy: [$class: 'LogRotator', numToKeepStr: '10']],
+    pipelineTriggers([bitbucketPush()])
+]
+
+
+/* Only keep the 10 most recent builds. */
+@Library('LibUtils')
+import org.alerion.pipeline.PythonUtils
+import org.alerion.pipeline.Enums
+
+
+def utils = new PythonUtils(this)
+utils.repo = './image_qa_tool'
+
+try {
+    parallel(
+        amd64: {
+            node('x86-node') {
+                stage('Checkout') {
+                    checkoutBranch(utils)
+                    sh("aws ecr get-login-password --region ${env.ECRZONE}| docker login --username AWS --password-stdin  ${env.ECRURL}")
+                }
+                docker.image("${env.ECRURL}/${IMAGEX86}").inside(
+                    "-v ${env.VOLUME_REPOSITORY}:${env.VOLUME_REPOSITORY}/install")
+                {
+                    stage('Build') {
+                        utils.build_service("alerion_utils")
+                        utils.build_service("ai/training/nets_utils")
+                        utils.build_service("ai/training/surface_segmentation")
+                        utils.build_service("ai/training/image_classification")
+                        utils.build()
+                    }
+                    stage('QA') {
+                        utils.qa()
+                    }
+                }
+            }
+        },
+        arm64: {
+            node('arm64-node') {
+                stage('Checkout') {
+                    checkoutBranch(utils)
+                    sh("aws ecr get-login-password --region ${env.ECRZONE}| docker login --username AWS --password-stdin  ${env.ECRURL}")
+                }
+                docker.image("${env.ECRURL}/${IMAGEARM}").inside(
+                    "-v ${env.VOLUME_REPOSITORY}:${env.VOLUME_REPOSITORY}/install")
+                {
+                    stage('Build') {
+                        utils.build_service("alerion_utils")
+                        utils.build()
+                    }
+                }
+            }
+        }
+    )
+    Enums.SCMState scmstatus = Enums.SCMState.SUCCESSFUL
+    utils.notifyBuildState = "${scmstatus}"
+} catch(e) {
+    Enums.SCMState scmstatus = Enums.SCMState.FAILED
+    utils.notifyBuildState = "${scmstatus}"
+    echo "Caught: ${e}"
+    throw e
+} finally {
+    node {
+        stage('Notify') {
+            notifyEmail(utils)
+            notifyScm(utils)
+        }
+    }
+}

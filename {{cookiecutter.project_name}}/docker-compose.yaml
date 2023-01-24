@@ -1,0 +1,22 @@
+version: "3"
+
+services:
+  alrn-qa-tool:
+    image: alrn-image-qa:v1.0
+    container_name: analytion-imageqa
+    build:
+      context: ${DOCKER_CONTEXT}
+      dockerfile: Dockerfile
+      args:
+        DATASET_PATH: ${DATASET_PATH}
+    env_file: .env
+    volumes:
+      - ${DATASET_PATH}:/var/tmp/results/data
+    ports:
+      - "5000:5000"
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4GB
